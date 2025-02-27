@@ -1,0 +1,4 @@
+name: llava-interleave-7b
+trainer_precision: 16-mixed
+
+dtype: torch.float16

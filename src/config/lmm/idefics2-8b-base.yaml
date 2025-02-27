@@ -1,0 +1,4 @@
+name: idefics2-8b-base
+trainer_precision: 16-mixed
+
+dtype: torch.float16

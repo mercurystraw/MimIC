@@ -1,0 +1,15 @@
+**/__pycache__/**
+**/.pytest_cache/**
+*.json
+!analysis/**/*.json
+!dataset/**/*.json
+results/**
+.vscode/**
+**/wandb/**
+**/outputs/**
+**/multirun/**
+ICLTestbed.egg-info/**
+ICLTestbed/**
+*.bin
+!/src/v2_mscoco_val2014_annotations.json
+!src/v2_OpenEnded_mscoco_val2014_questions.json
