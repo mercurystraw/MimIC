@@ -1,15 +1,12 @@
-from contextlib import nullcontext
 import enum
 from functools import reduce
 import os
-import pdb
 import sys
 
 sys.path.insert(0, "..")
 import config
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from deepspeed.ops.adam import DeepSpeedCPUAdam
@@ -291,9 +288,12 @@ class ShiftModel(pl.LightningModule):
         shift_logits = query_outputs["logits"]
         if Strategy.LM_LOSS in self.strategy:
             loss_dict["ce_loss"] = query_outputs["loss"]
-            loss_dict["loss"] += (
-                self.cfg.training.ce_loss_weight * query_outputs["loss"]
+            ce_loss_weight = (
+                1.0
+                if self.strategy == Strategy.LM_LOSS
+                else self.cfg.training.ce_loss_weight
             )
+            loss_dict["loss"] += ce_loss_weight * query_outputs["loss"]
 
         # extract query + answer + [EOS]
         shift_hidden_states = (

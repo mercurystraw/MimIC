@@ -5,7 +5,6 @@ import sys
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
-import utils
 import shlex
 
 

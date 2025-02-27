@@ -153,6 +153,18 @@ class AttnFFNShift(BaseHookEncoder):
         proj_dim=None,
         shift_scale_init_value=None,
     ):
+        """
+        Add shift to attention or ffn output. It can also capture hidden states for each layer
+        to calculate the layer-wise alignment loss.
+
+        Args:
+            lmm: the model to apply shift.
+            attn_strategy: the strategy for attention shift.
+            ffn_strategy: the strategy for ffn shift.
+            proj_dim: the projection dimension for shift. It should be used with ShiftStrategy.USE_VECTOR_IMPL.
+                In this case, the shift goes through a two-layer MLP.
+            shift_scale_init_value: the initial value for the learnable shift scale.
+        """
         super().__init__(lmm, attn_strategy, ffn_strategy)
 
         def parse_strategy(prefix, strategy):
@@ -683,6 +695,17 @@ class AttnApproximator(BaseHookEncoder):
         ffn_strategy: ShiftStrategy = ShiftStrategy(0),
         head_proj_dim=None,
     ):
+        """
+        The implementation of MimIC attention heads. It train learnable shifts and magnitudes for each layer
+        to approximate the in-context demonstrations affected terms (Section 3.2).
+
+        Args:
+            lmm: the model to apply shift.
+            attn_strategy: the strategy for attention shift.
+            ffn_strategy: the strategy for ffn shift.
+            head_proj_dim: the projection dimension for shift. When used with ShiftStrategy.USE_VECTOR_IMPL,
+                the learnable shift goes through a two-layer MLP. Otherwise, the query states are projected.
+        """
         super().__init__(lmm, attn_strategy, ffn_strategy)
         self.attn_shift_handles = [AttnApproxHandle() for _ in range(self.lmm_layers)]
 
