@@ -4,8 +4,6 @@ from typing import List, Callable, Dict, Optional, Tuple, Union
 import torch
 from torch import nn
 import re
-
-import torch.nn.functional as F
 import torch.utils
 
 
@@ -15,8 +13,7 @@ class HookType(enum.Enum):
 
 
 class ShiftStrategy(enum.IntFlag):
-    USE_VECTOR_IMPL = 1
-    USE_PROJECTION = 2
+    VECTOR_SHIFT = 1
     RECORD_HIDDEN_STATES = 4
     LEARNABLE_SHIFT_SCALE = 8
     MULTI_HEAD = 16
@@ -73,12 +70,11 @@ class BaseHookEncoder(nn.Module):
                     [[] for _ in range(self.lmm_layers)],
                 )
 
-            if ShiftStrategy.LEARNABLE_SHIFT_SCALE in strategy and not (
-                strategy
-                & (ShiftStrategy.USE_PROJECTION | ShiftStrategy.USE_VECTOR_IMPL)
+            if ShiftStrategy.LEARNABLE_SHIFT_SCALE in strategy and (
+                ShiftStrategy.VECTOR_SHIFT not in strategy
             ):
                 raise ValueError(
-                    "ShiftStrategy.LEARNABLE_SHIFT_SCALE should used with ShiftStrategy.USE_PROJECTION or ShiftStrategy.USE_VECTOR_IMPL"
+                    "ShiftStrategy.LEARNABLE_SHIFT_SCALE should be used with ShiftStrategy.USE_VECTOR_SHIFT"
                 )
 
         parse_strategy("attn", self.attn_strategy)
@@ -150,7 +146,6 @@ class AttnFFNShift(BaseHookEncoder):
         lmm,
         attn_strategy: ShiftStrategy = ShiftStrategy(0),
         ffn_strategy: ShiftStrategy = ShiftStrategy(0),
-        proj_dim=None,
         shift_scale_init_value=None,
     ):
         """
@@ -161,20 +156,19 @@ class AttnFFNShift(BaseHookEncoder):
             lmm: the model to apply shift.
             attn_strategy: the strategy for attention shift.
             ffn_strategy: the strategy for ffn shift.
-            proj_dim: the projection dimension for shift. It should be used with ShiftStrategy.USE_VECTOR_IMPL.
-                In this case, the shift goes through a two-layer MLP.
             shift_scale_init_value: the initial value for the learnable shift scale.
         """
         super().__init__(lmm, attn_strategy, ffn_strategy)
 
         def parse_strategy(prefix, strategy):
+            """
+            Create shift modules to ffn output or attention output, based on the strategy.
+            """
             if ShiftStrategy.MULTI_HEAD in strategy:
                 raise ValueError(
                     f" ShiftStrategy.MULTI_HEAD is not supported, since shift is inserted after {prefix} output"
                 )
-            if strategy & (
-                ShiftStrategy.USE_VECTOR_IMPL | ShiftStrategy.USE_PROJECTION
-            ):
+            if ShiftStrategy.VECTOR_SHIFT in strategy:
                 setattr(
                     self,
                     f"{prefix}_shift",
@@ -182,24 +176,6 @@ class AttnFFNShift(BaseHookEncoder):
                         torch.empty(self.lmm_layers, self.lmm_hidden_dim).normal_(
                             mean=0.0, std=0.01
                         )
-                    ),
-                )
-
-                hidden_proj_dim = proj_dim if proj_dim else 32
-                setattr(
-                    self,
-                    f"{prefix}_proj",
-                    nn.ModuleList(
-                        (
-                            nn.Sequential(
-                                nn.Linear(self.lmm_hidden_dim, hidden_proj_dim),
-                                nn.SiLU(),
-                                nn.Linear(hidden_proj_dim, self.lmm_hidden_dim),
-                            )
-                            if ShiftStrategy.USE_PROJECTION in strategy
-                            else nn.Identity()
-                        )
-                        for _ in range(self.lmm_layers)
                     ),
                 )
 
@@ -595,90 +571,6 @@ class MultiheadProjection(nn.Module):
         return torch.einsum("btnd,ndd->btnd", x, self.weight) + self.bias
 
 
-class MultiheadRMSNorm(nn.Module):
-    def __init__(self, num_heads, head_dim, eps=1e-6):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.weight = nn.Parameter(torch.ones(num_heads, head_dim))
-        self.variance_epsilon = eps
-
-    def forward(self, hidden_states):
-        variance = hidden_states.to(torch.float32).pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-
-        if self.weight.dtype in [torch.float16, torch.bfloat16]:
-            hidden_states = hidden_states.to(self.weight.dtype)
-
-        return self.weight * hidden_states
-
-    def extra_repr(self):
-        return f"(num_heads={self.num_heads}, head_dim={self.head_dim}, eps={self.variance_epsilon})"
-
-
-class MultiheadAdapter(nn.Module):
-    def __init__(self, lmm_num_head, lmm_hidden_dim, head_proj_dim, dropout=0.05):
-        super().__init__()
-        head_dim = lmm_hidden_dim // lmm_num_head
-        self.lmm_num_head = lmm_num_head
-        self.head_dim = head_dim
-        self.down_proj = nn.ParameterDict(
-            dict(
-                weight=nn.Parameter(
-                    torch.empty(lmm_num_head, head_dim, head_proj_dim).normal_(0, 0.02)
-                ),
-                bias=nn.Parameter(torch.zeros([lmm_num_head, head_proj_dim])),
-            )
-        )
-        self.up_proj = nn.ParameterDict(
-            dict(
-                weight=nn.Parameter(
-                    torch.empty(lmm_num_head, head_proj_dim, head_dim).normal_(0, 0.02)
-                ),
-                bias=nn.Parameter(torch.zeros([lmm_num_head, head_dim])),
-            )
-        )
-        self.layer_norm = MultiheadRMSNorm(lmm_num_head, head_dim, eps=1e-6)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        residual = x
-        x = (
-            torch.einsum("btnd,ndh->btnh", x, self.down_proj["weight"])
-            + self.down_proj["bias"]
-        )
-        x = F.silu(x)
-        x = (
-            torch.einsum("btnh,nhd->btnd", x, self.up_proj["weight"])
-            + self.up_proj["bias"]
-        )
-
-        x = self.dropout(x)
-        x = self.layer_norm(x)
-
-        return x + residual
-
-
-class Adapter(nn.Module):
-    def __init__(self, lmm_hidden_dim, proj_dim, dropout=0.05):
-        super().__init__()
-        self.down_proj = nn.Linear(lmm_hidden_dim, proj_dim)
-        self.up_proj = nn.Linear(proj_dim, lmm_hidden_dim)
-        self.layer_norm = nn.RMSNorm(lmm_hidden_dim, eps=1e-6)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        residual = x
-        x = self.down_proj(x)
-        x = F.silu(x)
-        x = self.up_proj(x)
-
-        x = self.dropout(x)
-        x = self.layer_norm(x)
-
-        return x + residual
-
-
 class AttnApproxHandle:
     def __init__(self, active=False):
         self.active = active
@@ -691,9 +583,8 @@ class AttnApproximator(BaseHookEncoder):
     def __init__(
         self,
         lmm,
-        attn_strategy: ShiftStrategy = ShiftStrategy.USE_VECTOR_IMPL,
+        attn_strategy: ShiftStrategy = ShiftStrategy.VECTOR_SHIFT,
         ffn_strategy: ShiftStrategy = ShiftStrategy(0),
-        head_proj_dim=None,
     ):
         """
         The implementation of MimIC attention heads. It train learnable shifts and magnitudes for each layer
@@ -703,8 +594,6 @@ class AttnApproximator(BaseHookEncoder):
             lmm: the model to apply shift.
             attn_strategy: the strategy for attention shift.
             ffn_strategy: the strategy for ffn shift.
-            head_proj_dim: the projection dimension for shift. When used with ShiftStrategy.USE_VECTOR_IMPL,
-                the learnable shift goes through a two-layer MLP. Otherwise, the query states are projected.
         """
         super().__init__(lmm, attn_strategy, ffn_strategy)
         self.attn_shift_handles = [AttnApproxHandle() for _ in range(self.lmm_layers)]
@@ -719,7 +608,7 @@ class AttnApproximator(BaseHookEncoder):
                 for _ in range(self.lmm_layers)
             )
 
-        if ShiftStrategy.USE_VECTOR_IMPL in self.attn_strategy:
+        if ShiftStrategy.VECTOR_SHIFT in self.attn_strategy:
             self.attn_shift = nn.Parameter(
                 torch.randn(
                     [self.lmm_layers]
@@ -732,37 +621,13 @@ class AttnApproximator(BaseHookEncoder):
                 * 0.001
             )
 
-        if ShiftStrategy.USE_VECTOR_IMPL in self.ffn_strategy:
+        if ShiftStrategy.VECTOR_SHIFT in self.ffn_strategy:
             self.ffn_shift = nn.Parameter(
                 torch.randn([self.lmm_layers, self.lmm_hidden_dim]) * 0.001
             )
 
-        if ShiftStrategy.USE_PROJECTION in self.attn_strategy:
-            if head_proj_dim is None:
-                self.attn_proj = nn.ModuleList(
-                    (
-                        MultiheadProjection(self.lmm_num_head, self.lmm_hidden_dim)
-                        if ShiftStrategy.MULTI_HEAD in self.attn_strategy
-                        else nn.Linear(self.lmm_hidden_dim, self.lmm_hidden_dim)
-                    )
-                    for _ in range(self.lmm_layers)
-                )
-            else:
-                self.attn_proj = nn.ModuleList(
-                    (
-                        MultiheadAdapter(
-                            self.lmm_num_head, self.lmm_hidden_dim, head_proj_dim
-                        )
-                        if ShiftStrategy.MULTI_HEAD in self.attn_strategy
-                        else Adapter(self.lmm_hidden_dim, head_proj_dim)
-                    )
-                    for _ in range(self.lmm_layers)
-                )
-
     def register_shift_hooks(self, **kwargs):
-        if self.attn_strategy & (
-            ShiftStrategy.USE_PROJECTION | ShiftStrategy.USE_VECTOR_IMPL
-        ):
+        if ShiftStrategy.VECTOR_SHIFT in self.attn_strategy:
             if not hasattr(self, "attn_forward_replaced"):
                 if self.lmm.model_name == "idefics-9b":
                     new_attn_foward = idefics_attn_forward
@@ -785,7 +650,7 @@ class AttnApproximator(BaseHookEncoder):
                 handle.active = True
 
         registered_hooks = {"attn_hook": self.attn_shift_handles}
-        if ShiftStrategy.USE_VECTOR_IMPL in self.ffn_strategy:
+        if ShiftStrategy.VECTOR_SHIFT in self.ffn_strategy:
 
             def hook(m, inputs, outputs, module_name, **kwargs):
                 layer_idx = int(re.findall(r"\d+", module_name)[0])
@@ -859,13 +724,6 @@ class AttnApproximator(BaseHookEncoder):
                 if ShiftStrategy.LEARNABLE_SHIFT_SCALE in self.attn_strategy:
                     # shift := SA(q, K_D, V_D) - SA(q, K, V)
                     return attn_output + mu * shift
-            elif hasattr(self, "attn_proj"):
-                shift = self.attn_proj[layer_idx](query_states_transposed)
-                if ShiftStrategy.LEARNABLE_SHIFT_SCALE in self.attn_strategy:
-                    # multiply attn_output by 1 - mu instead of mu, since shift is attention on demonstrations
-                    # shift := SA(q, K_D, V_D)
-                    # multiply shift by 0.01 for stable training
-                    return (1 - mu) * attn_output + mu * shift * 0.01
             else:
                 # never fall in here
                 shift = torch.zeros_like(attn_output)
@@ -879,7 +737,7 @@ class AttnApproximator(BaseHookEncoder):
         super().eval()
         if (
             ShiftStrategy.USE_PROJECTION in self.attn_strategy
-            and ShiftStrategy.USE_VECTOR_IMPL in self.attn_strategy
+            and ShiftStrategy.VECTOR_SHIFT in self.attn_strategy
         ):
             with torch.no_grad():
                 for layer in range(self.lmm_layers):

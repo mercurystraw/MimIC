@@ -16,15 +16,10 @@ from utils import save_pretrained, get_full_runname
 
 
 class Strategy(enum.IntFlag):
-    LAYER_WISE_KL_DIV = 1
     LAYER_WISE_MSE = 2
     LAYER_WISE_COS_SIM = 64  # equivalent to normalized L2 distance
     LOGITS_KL_DIV = 4
     LM_LOSS = 8
-    LAYER_WISE_WEIGHTED = 16
-    LAYER_WISE_KL_DIV_AFTER_LM_HEAD = 32 | LAYER_WISE_KL_DIV
-    LAYER_WISE_WEIGHTED_MSE = LAYER_WISE_WEIGHTED | LAYER_WISE_MSE
-    LAYER_WISE_WEIGHTED_KL_DIV = LAYER_WISE_WEIGHTED | LAYER_WISE_KL_DIV
 
     def has_layer_wise(self):
         try:
@@ -35,7 +30,6 @@ class Strategy(enum.IntFlag):
 
     def validate(self):
         layer_wise_loss = [
-            Strategy.LAYER_WISE_KL_DIV,
             Strategy.LAYER_WISE_MSE,
             Strategy.LAYER_WISE_COS_SIM,
         ]
@@ -45,15 +39,8 @@ class Strategy(enum.IntFlag):
                 f"{[e.name for e in layer_wise_loss]} are mutually exclusive."
             )
 
-        if not self.has_layer_wise() and Strategy.LAYER_WISE_WEIGHTED in self:
-            raise ValueError(
-                "LAYER_WISE_SIM_WEIGHTED should be used with layer wise loss"
-            )
-
     def layer_wise_strategy(self):
-        if Strategy.LAYER_WISE_KL_DIV in self:
-            return "kl_loss"
-        elif Strategy.LAYER_WISE_MSE in self:
+        if Strategy.LAYER_WISE_MSE in self:
             return "mse_loss"
         elif Strategy.LAYER_WISE_COS_SIM in self:
             return "cos_sim"
@@ -153,31 +140,11 @@ class ShiftModel(pl.LightningModule):
         return hidden_states_dict
 
     def calculate_layer_wise_loss(self, shift_hidden_states, prefix_hidden_states):
-        if Strategy.LAYER_WISE_KL_DIV in self.strategy:
-
-            def kl_div(input, target):
-                if Strategy.LAYER_WISE_KL_DIV_AFTER_LM_HEAD in self.strategy:
-                    input = self.lmm.model.base_model.lm_head(input)
-                    target = self.lmm.model.base_model.lm_head(target)
-                return F.kl_div(
-                    input.log_softmax(dim=-1),
-                    target.softmax(dim=-1),
-                    reduction=(
-                        "none"
-                        if Strategy.LAYER_WISE_WEIGHTED in self.strategy
-                        else "batchmean"
-                    ),
-                    log_target=False,
-                )
-
-            loss_fn = kl_div
-        elif Strategy.LAYER_WISE_MSE in self.strategy:
+        if Strategy.LAYER_WISE_MSE in self.strategy:
             loss_fn = lambda input, target: F.mse_loss(
                 input,
                 target,
-                reduction=(
-                    "none" if Strategy.LAYER_WISE_WEIGHTED in self.strategy else "mean"
-                ),
+                reduction="mean",
             )
         elif Strategy.LAYER_WISE_COS_SIM in self.strategy:
             loss_fn = lambda input, target: 1 - torch.mean(
@@ -188,20 +155,6 @@ class ShiftModel(pl.LightningModule):
                 ),
                 dim=1,
             )
-
-        def criterion(input, target):
-            if Strategy.LAYER_WISE_WEIGHTED in self.strategy:
-                return torch.mean(
-                    (
-                        1
-                        - torch.mean(
-                            F.cosine_similarity(input, target, dim=-1), 1, keepdim=True
-                        ).unsqueeze(-1)
-                    )
-                    * loss_fn(input, target)
-                )
-            else:
-                return loss_fn(input, target)
 
         layer_loss = dict()
         for (shift_hs_varname, shift_hs_list), (_, prefix_hs_list) in zip(
@@ -215,7 +168,7 @@ class ShiftModel(pl.LightningModule):
             ] = torch.mean(
                 torch.stack(
                     [
-                        criterion(shift_hs, prefix_hs)
+                        loss_fn(shift_hs, prefix_hs)
                         for shift_hs, prefix_hs in zip(shift_hs_list, prefix_hs_list)
                     ]
                 )
