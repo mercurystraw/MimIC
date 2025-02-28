@@ -2,8 +2,10 @@
 
 runname=$(basename "$0" .sh | sed 's/^run_//' | sed 's/_/-/g')
 
-cd ../
+cd ../src/
 
+# -s should be 0 for ICL.
+# to specify the number of shots, use --eval-args "eval.num_shot=32"
 python pipeline.py \
     -r "$runname-idev-32shot" \
     -d seed \

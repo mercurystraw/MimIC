@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - encoder: mimic # mimic / lora / dora
-  - peft: ${encoder}
-  - lmm: idefics-9b
+  - encoder: mimic # see src/config/encoder
+  - peft: ${encoder} # see src/config/peft
+  - lmm: idefics-9b # see src/config/lmm
 
 runname: "default"
 model_name: ${lmm.name}

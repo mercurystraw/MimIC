@@ -223,7 +223,6 @@ class AttnFFNShift(BaseHookEncoder):
         def hook(m, inputs, outputs, module_name, **kwargs):
             layer_idx = int(re.findall(r"\d+", module_name)[0])
             shift = getattr(self, f"{prefix}_shift", None)
-            proj = getattr(self, f"{prefix}_proj", None)
             shift_scale = getattr(self, f"{prefix}_shift_scale", None)
 
             if isinstance(outputs, tuple):
@@ -233,9 +232,7 @@ class AttnFFNShift(BaseHookEncoder):
 
             if shift is not None:
                 shift = shift[layer_idx][None, None, :]
-                shifted_states = hidden_states + shift_scale[layer_idx] * proj[
-                    layer_idx
-                ](shift)
+                shifted_states = hidden_states + shift_scale[layer_idx] * shift
                 hidden_states = (
                     shifted_states
                     / shifted_states.norm(dim=-1, keepdim=True)
@@ -494,7 +491,7 @@ def llava_attn_forward(
 
     cos, sin = position_embeddings
 
-    from transformers.models.qwen2.modeling_qwen2 import (
+    from transformers.models.llama.modeling_llama import (
         apply_rotary_pos_emb,
         eager_attention_forward,
         ALL_ATTENTION_FUNCTIONS,

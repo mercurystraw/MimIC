@@ -2,7 +2,7 @@
 
 runname=$(basename "$0" .sh | sed 's/^run_//')
 
-cd ../
+cd ../src/
 
 python pipeline.py \
     -r "$runname-r-1" \
