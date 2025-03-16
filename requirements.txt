@@ -13,7 +13,7 @@ pycocotools==2.0.8
 pytest==8.3.3
 pytorch_lightning==2.4.0
 rich>=10.2.2
-setuptools==69.5.1
+setuptools>=70.0.0
 termcolor==2.5.0
 bytecode==0.16.1
 torch==2.5.1

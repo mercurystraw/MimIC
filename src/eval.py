@@ -87,9 +87,10 @@ def get_dataloader(cfg, batch_size, num_shot, is_icl):
             query_set = query_set.select(range(min(len(query_set), query_set_size)))
 
         if is_icl:
-            query_set = query_set.shuffle(seed=cfg.seed).select(
-                range(min(len(query_set), query_set_size))
-            )
+            query_set = query_set.shuffle(seed=cfg.seed)
+            if query_set_size is not None:
+                query_set = query_set.select(range(min(len(query_set), query_set_size)))
+
         dataloader = prepare_dataloader(
             query_set, batch_size=batch_size, num_shots=num_shot, drop_last=True
         )
