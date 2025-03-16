@@ -36,13 +36,18 @@ class Idefics(ModelBase):
         # fmt: off
         return (
             "{% if messages[0]['role'].lower() in ['instruction', 'system'] %}"
-                "{{ messages[0]['role'].capitalize() + ':' + messages[0]['content'] + '\n'}}"
+                "{{ messages[0]['role'].capitalize() + ': ' + messages[0]['content'] + '\n'}}"
                 "{% set messages = messages[1:] %}"
             "{% endif %}"
             "{% set first_role = messages[0]['role'] %}"
+            "{% set ns = namespace(generation_role='Assistant') %}"
             "{% for message in messages %}"
+                "{% set is_end_of_round = loop.last or loop.nextitem['role'] == first_role %}"
                 "{% if message['role'] != '' %}"
                     "{{ message['role'].capitalize() }}"
+                    "{% if is_end_of_round %}"
+                        "{% set ns.generation_role = message['role'] %}"
+                    "{% endif %}"
                     "{% if not 'content' in message or message['content'][0]['type'] == 'image' %}"
                         "{{':'}}"
                     "{% else %}"
@@ -50,28 +55,26 @@ class Idefics(ModelBase):
                     "{% endif %}" 
                 "{% endif %}"
                 "{% if 'content' in message %}"
-                    "{% if message['content'] is string %}"
-                        "{{ message['content'] }}\n"
-                    "{% else %}"
-                        "{% for line in message['content'] %}"
-                            "{% if line['type'] == 'text' %}"
-                                "{{ line['text'] }}"
-                            "{% elif line['type'] == 'image' %}"
-                                "{{- '<image>' }}"
-                            "{% endif %}"
-                            "{% if not loop.last %}"
-                                " "
-                            "{%+ endif %}"
-                        "{% endfor %}"
-                        "{% set is_end_of_round = loop.nextitem is not defined or loop.nextitem['role'] == first_role %}"
-                        "{% if is_end_of_round %}"
-                            "{{ '\n' }}"
-                        "{% else %}"
-                            " "
+                    "{% for line in message['content'] %}"
+                        "{% if line['type'] == 'text' %}"
+                            "{{ line['text'] }}"
+                        "{% elif line['type'] == 'image' %}"
+                            "{{ '<image>' }}"
+                        "{% endif %}"
+                        "{% if not loop.last %}"
+                            "{{ ' ' }}"
                         "{%+ endif %}"
-                    "{% endif %}" 
-                "{% endif %}"
+                    "{% endfor %}"
+                    "{% if is_end_of_round %}"
+                        "{{ '\n' }}"
+                    "{% else %}"
+                        "{{ ' ' }}"
+                    "{% endif %}"
+                "{% endif %}" 
             "{% endfor %}"
+            "{% if add_generation_prompt %}"
+                "{{ ns.generation_role.capitalize() + ':' }}"
+            "{% endif %}"
         )
         # fmt: on
 
@@ -118,29 +121,29 @@ class Idefics(ModelBase):
         if isinstance(text[0][0], dict):
             text = self.apply_prompt_template(text, prompt_template=prompt_template)
 
+        assert len(text) == len(images)
+        inputs = []
+        for i, (ctx, image_list) in enumerate(zip(text, images)):
+            text_parts = ctx.split("<image>")
+
+            if len(text_parts) - 1 != len(image_list):
+                raise ValueError(
+                    f"In the {i}-th input, the number of images {len(image_list)} does "
+                    f"not match the number of image tokens {len(text_parts) - 1} in the text."
+                )
+            result = []
+            for seg, image in zip(text_parts, image_list):
+                if seg != "":
+                    result.append(seg)
+                result.append(image)
+            if text_parts[-1] != "":  # the last question without answer
+                result.append(text_parts[-1])
+            inputs.append(result)
+
         if version.parse(transformers.__version__) < version.parse("4.46.0"):
-            assert len(text) == len(images)
-            inputs = []
-            for i, (ctx, image_list) in enumerate(zip(text, images)):
-                text_parts = ctx.split("<image>")
-
-                if len(text_parts) - 1 != len(image_list):
-                    raise ValueError(
-                        f"In the {i}-th input, the number of images {len(image_list)} does "
-                        f"not match the number of image tokens {len(text_parts) - 1} in the text."
-                    )
-                result = []
-                for seg, image in zip(text_parts, image_list):
-                    if seg != "":
-                        result.append(seg)
-                    result.append(image)
-                if text_parts[-1] != "":  # the last question without answer
-                    result.append(text_parts[-1])
-                inputs.append(result)
-
             process = partial(self.processor, prompts=inputs)
         else:
-            process = partial(self.processor, text=text, images=images)
+            process = partial(self.processor, text=inputs)
 
         return process(
             padding=kwargs.pop("padding", True),

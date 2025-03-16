@@ -729,17 +729,3 @@ class AttnApproximator(BaseHookEncoder):
 
         # attn_output: [bsz, t, nh, nd]
         return attn_output
-
-    def eval(self):
-        super().eval()
-        if (
-            ShiftStrategy.USE_PROJECTION in self.attn_strategy
-            and ShiftStrategy.VECTOR_SHIFT in self.attn_strategy
-        ):
-            with torch.no_grad():
-                for layer in range(self.lmm_layers):
-                    attn_shift_layer = self.attn_shift.data[layer]
-                    attn_shift_layer = attn_shift_layer.unsqueeze(0).unsqueeze(0)
-                    new_attn_shift_layer = self.attn_proj[layer](attn_shift_layer)
-                    new_attn_shift_layer = new_attn_shift_layer.squeeze(0).squeeze(0)
-                    self.attn_shift.data[layer] = new_attn_shift_layer

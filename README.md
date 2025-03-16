@@ -17,7 +17,6 @@ The following command can help you build the environment for testing idefics1 an
 conda create -y -n mimic python=3.10
 pip install -r requirements.txt
 ```
-If you want to run llava-next-interleave, you must create a new environment and update `transformers` and `torch` to the latest version.
 ### 2. Specify the root path of your models and datasets in `config.py`
 For models, we currently support idefics1, idefics2 and llava-next-interleave. For datasets, VQAv2, OK-VQA, COCO, hateful memes, MME, MMLU and SEED are available.
 
