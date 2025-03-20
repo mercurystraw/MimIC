@@ -1,5 +1,6 @@
 import os
 
+import paths
 from data_module import DataModule
 from shift_model import ShiftModel, Strategy
 import pytorch_lightning as pl
@@ -9,10 +10,6 @@ from pytorch_lightning.callbacks import (
     RichProgressBar,
 )
 from pytorch_lightning.loggers.wandb import WandbLogger
-import sys
-
-sys.path.insert(0, "..")
-import config
 from termcolor import colored
 import hydra
 from omegaconf import DictConfig
@@ -21,7 +18,7 @@ from utils import *
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-@hydra.main(config_path="config", config_name="exp_settings.yaml", version_base=None)
+@hydra.main(config_path="config", config_name="train.yaml", version_base=None)
 def main(cfg: DictConfig):
     def get_max_epochs():
         num_query_samples = cfg.data.num_query_samples
@@ -67,12 +64,12 @@ def main(cfg: DictConfig):
                 return epoch >= 5
             return True
 
-    max_epochs = cfg.training.epochs if cfg.training.epochs else get_max_epochs()
-    runname = get_full_runname(cfg)
+    max_epochs = cfg.epochs if cfg.epochs else get_max_epochs()
+    runname = get_expand_runname(cfg)
     print(colored(f"Training for {runname} on {cfg.model_name}", "light_blue"))
 
-    if cfg.resume_train:
-        save_dir = os.path.join(config.result_dir, "ckpt", runname)
+    if cfg.resume:
+        save_dir = os.path.join(paths.result_dir, "ckpt", runname)
         os.makedirs(save_dir, exist_ok=True)
         exist_ckpt_epochs = [
             int(d.split("-")[-1])
@@ -85,10 +82,10 @@ def main(cfg: DictConfig):
         else:
             print(f"All checkpoints {runname} matched, skip...")
             return
-    pl.seed_everything(cfg.seed)
-    os.makedirs(config.result_dir, exist_ok=True)
+    pl.seed_everything(cfg.data.seed)
+    os.makedirs(paths.result_dir, exist_ok=True)
     wb_logger = WandbLogger(
-        save_dir=config.result_dir,
+        save_dir=paths.result_dir,
         name=runname,
         project="VQAInContextVector",
         log_model=False,
@@ -105,11 +102,11 @@ def main(cfg: DictConfig):
         max_epochs=max_epochs,
         devices=len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")),
         use_distributed_sampler=False,
-        strategy=cfg.training.strategy,
-        precision=cfg.training.precision,
-        gradient_clip_val=cfg.training.grad_clip_val,
+        strategy=cfg.strategy,
+        precision=cfg.precision,
+        gradient_clip_val=cfg.grad_clip_val,
         log_every_n_steps=2,
-        accumulate_grad_batches=cfg.training.accumulate_grad_batches,
+        accumulate_grad_batches=cfg.accumulate_grad_batches,
         enable_checkpointing=False,
     )
 

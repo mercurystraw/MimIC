@@ -3,7 +3,7 @@ ce_loss_weight: 1
 align_loss_weight: 0
 lr: 5e-4
 r: 16
-lora_dropout: 0
+lora_dropout: 0.05
 
 idefics-9b:
   task_type: CAUSAL_LM

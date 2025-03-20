@@ -2,50 +2,8 @@ defaults:
   - _self_
   - encoder: mimic # see src/config/encoder
   - peft: ${encoder} # see src/config/peft
-  - lmm: idefics-9b # see src/config/lmm
+  - data
+  
+model_name: null
 
-runname: "default"
-model_name: ${lmm.name}
-seed: 3407
-
-# whether start training/evaluation from the last step
-resume_train: True
-resume_eval: True
-
-data:
-  num_query_samples: 500
-  name: "vqav2"
-  vqa_instruction: "Provide an answer to the question. Use the image to answer."
-  caption_instruction: null
-  hm_instruction: "It's a conversation between a human, the user, and an intelligent visual AI, Bot. The user sends memes with text written on them, and Bot has to say whether the meme is hateful or not."
-  mme_instruction: "Provide an answer in \"Yes\" or \"No\" to the question. Use the image to answer."
-  num_shot: 32
-  num_workers: 5
-  num_image_in_query: 1
-
-training:
-  lr: ${peft.lr}
-  weight_decay: 5e-3
-  warmup_step: 0.1
-  batch_size: 2
-  epochs: null # int or null. if null, decide by train.py
-  ce_loss_weight: ${peft.ce_loss_weight}
-  align_loss_weight: ${peft.align_loss_weight}
-  strategy: deepspeed_stage_2_offload  # Options: "deepspeed_stage_2_offload" / "ddp"
-  accumulate_grad_batches: 2
-  grad_clip_val: 1.0
-  precision: ${lmm.trainer_precision}
-
-eval:
-  query_set: ${data.name}
-  query_set_size: null # the number of samples to evaluate. if set to null, all samples will be evaluated.
-  support_set: ${data.name}
-  ckpt_epochs: "all" # 'all', int, list of int or null. if null, conventional icl will be evaluated
-  num_shot: 0 # do not forget to set it to the number of demonstrations when evaluating icl
-  batch_size: 16
-  iterations: -1 # iteration * batch_size samples will be evaluated. if set to -1, all samples will be evaluated.
-  max_skip_oom: 0 # skip out-of-memory samples
-  generation_args:
-    num_beams: 3
-    max_new_tokens: 10
-    length_penalty: 0.0
+dtype: torch.float16

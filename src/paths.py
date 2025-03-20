@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
-
+import sys
+sys.path.insert(0, "..")
 machine_id = subprocess.run(
     ["cat", "/etc/machine-id"],
     stdout=subprocess.PIPE,
@@ -8,8 +9,8 @@ machine_id = subprocess.run(
     text=True,
 ).stdout
 # path
-testbed_dir = str(Path(__file__).parent / "testbed")
-result_dir = str(Path(__file__).parent / "results")
+testbed_dir = str(Path(__file__).parent.parent / "testbed")
+result_dir = str(Path(__file__).parent.parent / "results")
 
 if "7fd422" in machine_id:
     # 8x3090
@@ -25,8 +26,7 @@ if "7fd422" in machine_id:
 
     idefics_9b_path = "/data1/share/model_weight/idefics/idefics-9b"
     llava_interleave_7b_path = (
-        "/data1/share/model_weight/llava/llava-interleave-qwen-7b-hf"
-    )
+        "/data1/share/model_weight/llava/llava-interleave-qwen-7b-hf")
     idefics2_8b_path = "/data1/share/model_weight/idefics/idefics2-8b"  # you'd better not use idefics2-8b to run icl
     idefics2_8b_base_path = "/data1/share/model_weight/idefics/idefics2-8b-base"
 elif "a5d380cc" in machine_id:
@@ -36,18 +36,17 @@ elif "a5d380cc" in machine_id:
     ok_vqa_dir = "/home/share/pyz/dataset/okvqa"
     seed_dir = "/home/share/pyz/dataset/SEED"
     mme_dir = "/home/share/pyz/dataset/MME"
-    mmmu_pro_dir = "/home/share/pyz/dataset/MMMU-Pro"
     karpathy_coco_caption_dir = "/home/share/karpathy-split"
+    flickr30k_dir = karpathy_coco_caption_dir
+    flickr30k_images_dir = "/home/share/flickr30k"
     ocr_vqa_dir = "/home/share/dataset/OCR-VQA"
     ocr_vqa_images_dir = "/home/share/dataset/OCR-VQA/images"
 
     idefics_9b_path = "/home/share/pyz/model_weight/idefics-9b"
     llava_interleave_7b_path = (
-        "/home/share/pyz/model_weight/llava-interleave-qwen-7b-hf"
-    )
+        "/home/share/pyz/model_weight/llava-interleave-qwen-7b-hf")
     idefics2_8b_path = "/home/share/pyz/model_weight/idefics2-8b"  # you'd better not use idefics2-8b to run icl
     idefics2_8b_base_path = "/home/share/pyz/model_weight/idefics2-8b-base"
-
 
 elif "8faf59b" in machine_id:
     # 4x3090

@@ -6,9 +6,11 @@ cd ../src/
 
 python pipeline.py \
     -r "$runname" \
-    -d ocr_vqa \
-    -m idefics2-8b-base \
+    -d vqav2 \
+    -m idefics-9b \
     -q 1000 \
-    -s 8 \
-    --train-args "encoder=licv peft=mimic" \
-    --eval-args "encoder=licv peft=mimic"
+    -s 32 \
+    -a \
+    --requires_memory 20000 \
+    --train-args "encoder=licv peft=licv" \
+    --eval-args "encoder=licv peft=licv"

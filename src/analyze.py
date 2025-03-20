@@ -6,38 +6,33 @@ import hydra
 from omegaconf import DictConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-sys.path.insert(0, "..")
-import config
+import paths
 from utils import *
+from dataset_utils import dataset_mapping
 from termcolor import colored
 
 
 def sort_runname_key(runname: str):
-    if runname.endswith("shot"):
-        # {runname}-{num_query_samples}-{num_shot}shot
-        prefix, query_samples, shot = runname.rsplit("-", 2)
-        return (prefix, int(query_samples), int(re.findall(r"\d+", shot)[0]))
-    else:
-        # legacy format: {runname}-{num_query_samples}
-        prefix, query_samples = runname.rsplit("-", 1)
-        return (prefix, int(query_samples))
+    # ...-{num_query_samples}-{num_shot}shot
+    prefix, query_samples, shot = runname.rsplit("-", 2)
+    return (prefix, int(query_samples), int(re.findall(r"\d+", shot)[0]))
 
 
-@hydra.main(config_path="config", config_name="exp_settings.yaml", version_base=None)
+@hydra.main(config_path="config", config_name="analyze.yaml", version_base=None)
 def main(cfg: DictConfig):
-    verbose = cfg.get("verbose", False)
-    metric_key = cfg.get("metric_key", None)
-    runname = get_full_runname(cfg)
-    topk = cfg.get("topk", 1)
+    verbose = cfg.verbose
+    runname = get_expand_runname(cfg)
+    topk = cfg.topk
+    metric_key = dataset_mapping[cfg.data.name].metric_key()
 
-    record_base_dir = os.path.join(config.result_dir, "record")
+    record_base_dir = os.path.join(paths.result_dir, "record")
     record_dirs = {
         name: os.path.join(record_base_dir, name)
         for name in os.listdir(record_base_dir)
         if name.startswith(runname)
         and os.path.isdir(os.path.join(record_base_dir, name))
     }
-    ckpt_base_dir = os.path.join(config.result_dir, "ckpt")
+    ckpt_base_dir = os.path.join(paths.result_dir, "ckpt")
     ckpt_dirs = {
         name: os.path.join(ckpt_base_dir, name)
         for name in sorted(os.listdir(ckpt_base_dir), key=sort_runname_key)
@@ -56,31 +51,21 @@ def main(cfg: DictConfig):
 
         if record_dir and os.path.isdir(record_dir):
             for record_file in os.listdir(record_dir):
-                if record_file.endswith(f"-on-{cfg.eval.query_set}.json"):
+                if record_file.endswith(f".json"):
                     # Extract epoch_ckpt from filename
-                    epoch_ckpt = record_file.split("-on-")[0]
+                    epoch_ckpt = record_file.removesuffix(".json")
                     try:
                         with open(os.path.join(record_dir, record_file)) as f:
                             content = json.load(f)
 
-                        # Get the metric based on the provided key, or fallback to 'overall' and 'CIDEr'
-                        if metric_key:
-                            metric_value = content["eval_result"].get(metric_key, None)
-                        else:
-                            metric_value = content["eval_result"].get("overall", None)
-                            if metric_value is None:
-                                metric_value = content["eval_result"].get("CIDEr", None)
-                                if metric_value is None:
-                                    metric_value = content["eval_result"].get("exact_match", None)
-                                if metric_value is None:
-                                    metric_value = content["eval_result"].get("accuracy", None)
-                                if metric_value is not None:
-                                    metric_value *= 100  # Multiply CIDEr by 100
-
+                        metric_value = content["eval_result"].get(metric_key, None)
                         if metric_value is None:
                             raise KeyError(
-                                f"Metric '{metric_key}' or fallback metrics 'overall'/'CIDEr' not found in eval_result."
+                                f"Metric '{metric_key}' not found in eval_result."
                             )
+                        
+                        if metric_key == "CIDEr":
+                            metric_value *= 100  # Multiply CIDEr by 100
 
                         meta_info[epoch_ckpt] = metric_value
 

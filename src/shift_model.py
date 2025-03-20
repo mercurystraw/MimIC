@@ -1,10 +1,13 @@
 import enum
 from functools import reduce
+import json
 import os
 import sys
 
+from omegaconf import OmegaConf
+
 sys.path.insert(0, "..")
-import config
+import paths
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -12,7 +15,7 @@ import torch.optim as optim
 from deepspeed.ops.adam import DeepSpeedCPUAdam
 from transformers import get_cosine_schedule_with_warmup
 
-from utils import save_pretrained, get_full_runname
+from utils import save_pretrained, get_expand_runname
 
 
 class Strategy(enum.IntFlag):
@@ -67,7 +70,7 @@ class ShiftModel(pl.LightningModule):
             if save_checkpoint_when is not None
             else lambda epoch: epoch == self.trainer.max_epochs - 1
         )
-        self.save_dir = os.path.join(config.result_dir, "ckpt", get_full_runname(cfg))
+        self.save_dir = os.path.join(paths.result_dir, "ckpt", get_expand_runname(cfg))
 
     def generate_label_mask(self, inputs, num_separator, keep_bos=False):
         """
@@ -242,9 +245,7 @@ class ShiftModel(pl.LightningModule):
         if Strategy.LM_LOSS in self.strategy:
             loss_dict["ce_loss"] = query_outputs["loss"]
             ce_loss_weight = (
-                1.0
-                if self.strategy == Strategy.LM_LOSS
-                else self.cfg.training.ce_loss_weight
+                1.0 if self.strategy == Strategy.LM_LOSS else self.cfg.ce_loss_weight
             )
             loss_dict["loss"] += ce_loss_weight * query_outputs["loss"]
 
@@ -266,9 +267,7 @@ class ShiftModel(pl.LightningModule):
                 shift_hidden_states, prefix_hidden_states
             )
             loss_dict.update(layer_loss)
-            loss_dict["loss"] += self.cfg.training.align_loss_weight * sum(
-                layer_loss.values()
-            )
+            loss_dict["loss"] += self.cfg.align_loss_weight * sum(layer_loss.values())
 
         # step 4. calculate the last logits kl div
         if Strategy.LOGITS_KL_DIV in self.strategy:
@@ -279,7 +278,7 @@ class ShiftModel(pl.LightningModule):
                 prefix_label_mask,
             )
             loss_dict.update(logits_kl_loss)
-            loss_dict["loss"] += self.cfg.training.align_loss_weight * sum(
+            loss_dict["loss"] += self.cfg.align_loss_weight * sum(
                 logits_kl_loss.values()
             )
 
@@ -299,8 +298,14 @@ class ShiftModel(pl.LightningModule):
                 self.shift_encoder,
             )
 
+    def on_train_end(self):
+        if self.global_rank == 0:
+            with open(os.path.join(self.save_dir, "config.json"), "w") as f:
+                json.dump(OmegaConf.to_container(self.cfg, resolve=True), f, indent=4)
+
     def configure_optimizers(self):
         def filter_decay_params(param_dict, **common_args):
+            """filter parameters for optimizer, separate parameters by adding weight_decay or not"""
             non_decay_names = ["bias"]
             non_decay = [
                 {
@@ -323,7 +328,7 @@ class ShiftModel(pl.LightningModule):
                         for name in non_decay_names
                         if name not in n
                     ],
-                    "weight_decay": self.cfg.training.weight_decay,
+                    "weight_decay": self.cfg.weight_decay,
                     **common_args,
                 }
             ]
@@ -333,7 +338,10 @@ class ShiftModel(pl.LightningModule):
         param_dict = {
             n: p for n, p in self.shift_encoder.named_parameters() if p.requires_grad
         }
-        if "scale_lr" in self.cfg.peft:
+        if self.cfg.peft.get("scale_lr", None):
+            # if scale_lr is provided, separate scale parameters and regular parameters
+            # scale parameters will have a different learning rate, which typically is
+            # used for LIVE.
             scale_params = {
                 n: p for n, p in param_dict.items() if "log_Z1" in n or "scale" in n
             }
@@ -342,29 +350,29 @@ class ShiftModel(pl.LightningModule):
             }
 
             optim_groups = [
-                *filter_decay_params(regular_params, lr=self.cfg.training.lr),
+                *filter_decay_params(regular_params, lr=self.cfg.lr),
                 *filter_decay_params(scale_params, lr=self.cfg.peft.scale_lr),
             ]
         else:
-            optim_groups = filter_decay_params(param_dict, lr=self.cfg.training.lr)
+            optim_groups = filter_decay_params(param_dict, lr=self.cfg.lr)
 
         assert any(
             group["params"] is not None for group in optim_groups if "params" in group
         ), "No parameter to optimize."
 
-        if "deepspeed" in self.cfg.training.strategy:
+        if "deepspeed" in self.cfg.strategy:
             optimizer = DeepSpeedCPUAdam(
                 optim_groups,
-                weight_decay=self.cfg.training.weight_decay,
+                weight_decay=self.cfg.weight_decay,
             )
         else:
             optimizer = optim.AdamW(
                 optim_groups,
-                weight_decay=self.cfg.training.weight_decay,
+                weight_decay=self.cfg.weight_decay,
             )
 
         step_batches = self.trainer.estimated_stepping_batches
-        warmup_steps = self.cfg.training.warmup_step
+        warmup_steps = self.cfg.warmup_step
         if isinstance(warmup_steps, float):
             warm_steps = warmup_steps * step_batches
         elif isinstance(warmup_steps, int):

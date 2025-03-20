@@ -382,6 +382,7 @@ def idefics_attn_forward(
 
 
 # Copied from transformers.models.mistral.modeling_mistral.MistralSpdaAttention
+# The latest version of MistralSpdaAttention is not available in the transformers>=4.46 (not tested)
 def idefics2_attn_forward(
     self,
     hidden_states: torch.Tensor,

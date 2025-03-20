@@ -1,11 +1,13 @@
 import argparse
 import os
+import re
 import subprocess
 import sys
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import shlex
+import paths
 
 
 def merge_args(base_args, new_args):
@@ -50,7 +52,7 @@ def get_avail_devices(devices, requires_memory=None):
 
 
 def run_train(
-    run_name,
+    runname,
     dataset,
     num_query_sample,
     num_shot,
@@ -66,8 +68,8 @@ def run_train(
             ]
             + merge_args(
                 [
-                    f"runname={run_name}",
-                    f"lmm={model_name}",
+                    f"runname={runname}",
+                    f"model_name={model_name}",
                     f"data.num_query_samples={num_query_sample}",
                     f"data.name={dataset}",
                     f"data.num_shot={num_shot}",
@@ -86,7 +88,7 @@ def run_train(
         returncode = process.wait()
 
         if returncode != 0:
-            if process.stderr and "torch.cuda.OutOfMemoryError" in process.stderr:
+            if process.stderr and "out of memory" in process.stderr:
                 return dataset, num_query_sample, num_shot
         else:
             return True
@@ -97,15 +99,15 @@ def run_train(
 
 
 def run_eval(
-    run_name, dataset, num_query_sample, num_shot, model_name, gpu_id, eval_args
+    ckpt_path, dataset, num_query_sample, num_shot, model_name, gpu_id, eval_args
 ):
     try:
         process = subprocess.Popen(
             ["python", "eval.py"]
             + merge_args(
                 [
-                    f"lmm={model_name}",
-                    f"runname={run_name}",
+                    f"ckpt_path={ckpt_path or 'null'}",
+                    f"model_name={model_name}",
                     f"data.name={dataset}",
                     f"data.num_shot={num_shot}",
                     f"data.num_query_samples={num_query_sample}",
@@ -121,10 +123,10 @@ def run_eval(
         returncode = process.wait()
 
         if returncode != 0:
-            if process.stderr and "torch.cuda.OutOfMemoryError" in process.stderr:
+            if process.stderr and "out of memory" in process.stderr:
                 return dataset, num_query_sample, num_shot
             print(
-                f"Evaluation failed on GPU {gpu_id} for runname: {run_name}, dataset: {dataset}"
+                f"Evaluation failed on GPU {gpu_id} for runname: {ckpt_path}, dataset: {dataset}"
             )
         else:
             return True
@@ -133,16 +135,20 @@ def run_eval(
     return False
 
 
-def run_analyze(
-    run_name, dataset, num_query_sample, num_shot, model_name, analyze_args
-):
+def run_analyze(runname, dataset, num_query_sample, num_shot, model_name, analyze_args):
+    if "icl" in runname:
+        # runname-model-dataset
+        expand_runname = f"{runname}-{model_name}-{dataset}"
+    else:
+        # runname-model-dataset-training_samples-num_shot
+        expand_runname = f"{runname}-{model_name}-{dataset}-{num_query_sample}-{num_shot}shot"
     try:
         subprocess.run(
             ["python", "analyze.py"]
             + merge_args(
                 [
-                    f"lmm={model_name}",
-                    f"runname={run_name}",
+                    f"model_name={model_name}",
+                    f"record_dir={os.path.join(paths.result_dir, 'record', expand_runname)}",
                     f"data.name={dataset}",
                     f"data.num_shot={num_shot}",
                     f"data.num_query_samples={num_query_sample}",
@@ -154,28 +160,64 @@ def run_analyze(
         )
     except subprocess.CalledProcessError as e:
         print(
-            f"Analyze failed for runname: {run_name}, dataset: {dataset}",
+            f"Analyze failed for runname: {runname}, dataset: {dataset}",
             file=sys.stderr,
         )
         sys.exit(1)
 
 
-def execute_eval(run_name, tasks, model_name, eval_args, devices):
+def execute_eval(runname, tasks, model_name, eval_args, devices):
     task_queue = tasks.copy()
+    futures = {}
+
+    def get_gpu_id():
+        available_gpus = [
+            gpu_id
+            for gpu_id in get_avail_devices(devices).split(",")
+            if gpu_id not in futures
+        ]
+        if not available_gpus:
+            # no available GPUs, wait for tasks to finish
+            next(as_completed(futures.values())).result()
+            available_gpus = [gpu_id for gpu_id, f in futures.items() if f.done()]
+            futures = {gpu_id: f for gpu_id, f in futures.items() if not f.done()}
+
+        return available_gpus.pop(0)
 
     with ThreadPoolExecutor() as executor:
-        futures = {}
+
         while task_queue or futures:
-            available_gpus = get_avail_devices(devices).split(",")
-            for gpu_id in available_gpus:
-                if task_queue and gpu_id not in futures:
-                    dataset, num_query_sample, num_shot = task_queue.pop(0)
+            dataset, num_query_sample, num_shot = task_queue.pop(0)
+            if "icl" in runname:
+                # runname-model-dataset
+                expand_runname = f"{runname}-{model_name}-{dataset}"
+                gpu_id = get_gpu_id()
+                print(
+                    f"Assigning task to GPU {gpu_id}: {dataset=}, {num_query_sample=}, {num_shot=}, ICL"
+                )
+                futures[gpu_id] = executor.submit(
+                    run_eval,
+                    None,
+                    dataset,
+                    num_query_sample,
+                    num_shot,
+                    model_name,
+                    gpu_id,
+                    eval_args,
+                )
+            else:
+                # runname-model-dataset-training_samples-num_shot
+                expand_runname = f"{runname}-{model_name}-{dataset}-{num_query_sample}-{num_shot}shot"
+                ckpt_dir = os.path.join(paths.result_dir, "ckpt", expand_runname)
+                for epoch_ckpt in os.listdir(ckpt_dir):
+                    epoch = re.findall(r"\d+", epoch_ckpt)[0]
+                    gpu_id = get_gpu_id()
                     print(
-                        f"Assigning task to GPU {gpu_id}: {dataset}, {num_query_sample}, {num_shot}"
+                        f"Assigning task to GPU {gpu_id}: {dataset=}, {num_query_sample=}, {num_shot=}, {epoch=}"
                     )
                     futures[gpu_id] = executor.submit(
                         run_eval,
-                        run_name,
+                        os.path.join(ckpt_dir, epoch_ckpt),
                         dataset,
                         num_query_sample,
                         num_shot,
@@ -184,19 +226,11 @@ def execute_eval(run_name, tasks, model_name, eval_args, devices):
                         eval_args,
                     )
 
-            ret = next(as_completed(futures.values())).result()
-            if isinstance(ret, tuple):
-                task_queue.append(ret)
-            elif not ret:
-                sys.exit(1)
-
-            futures = {gpu_id: f for gpu_id, f in futures.items() if not f.done()}
-
 
 def main():
     parser = argparse.ArgumentParser(description="Run training and evaluation tasks.")
     parser.add_argument(
-        "-r", "--run-name", required=True, help="Name for the current run."
+        "-r", "--runname", required=True, help="Name for the current run."
     )
     parser.add_argument(
         "-d", "--datasets", required=True, help="Comma-separated list of datasets."
@@ -266,7 +300,7 @@ def main():
     datasets = args.datasets.split(",")
     num_query_samples = args.num_query_samples.split(",")
     num_shots = args.num_shots.split(",")
-    run_name = args.run_name
+    runname = args.runname
     model_name = args.model_name
     train_args = getattr(args, "train_args") or ""
     eval_args = getattr(args, "eval_args") or ""
@@ -313,7 +347,7 @@ def main():
         while task_queue:
             dataset, num_query_sample, num_shot = task_queue.pop(0)
             ret = run_train(
-                run_name,
+                runname,
                 dataset,
                 num_query_sample,
                 num_shot,
@@ -329,13 +363,13 @@ def main():
 
     if args.eval:
         print("Starting evaluation phase...")
-        execute_eval(run_name, tasks, model_name, eval_args, devices)
+        execute_eval(runname, tasks, model_name, eval_args, devices)
 
     if args.analyze:
         print("Starting analysis phase...")
         for dataset, num_query_sample, num_shot in tasks:
             run_analyze(
-                run_name, dataset, num_query_sample, num_shot, model_name, analyze_args
+                runname, dataset, num_query_sample, num_shot, model_name, analyze_args
             )
 
 

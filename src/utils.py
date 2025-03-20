@@ -4,18 +4,13 @@ import torch
 import torch.nn as nn
 import peft
 from peft import PeftModel, LoraConfig, PrefixTuningConfig
-from omegaconf import OmegaConf
-import subprocess
-import sys
+from omegaconf import DictConfig, OmegaConf
 
-
-sys.path.insert(0, "..")
-import config
+import paths
 from testbed.models.llava import LLaVa
 from testbed.models import Idefics, Idefics2
-from testbed.data import register_dataset_retriever, register_postprocess
 
-OmegaConf.register_new_resolver("eval", eval)
+OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 
 class NullPeftModel(nn.Module):
@@ -71,31 +66,27 @@ def convert_to_peft(cfg, lmm):
 def build_model(cfg):
     if cfg.model_name == "idefics-9b":
         lmm = Idefics(
-            config.idefics_9b_path,
-            torch_dtype=eval(cfg.lmm.dtype),
+            paths.idefics_9b_path,
+            torch_dtype=eval(cfg.dtype),
         )
     elif cfg.model_name == "idefics2-8b-base":
         processor_args = {
             "do_image_splitting": False,
         }
-        if (
-            "seed" in cfg.data.name
-            or "mme" in cfg.data.name
-            or "mmmu-pro" in cfg.data.name
-        ):
+        if "seed" in cfg.data.name or "mme" in cfg.data.name:
             # seed bench cannot even run 1 shot with the default setting
             processor_args["largest_edges"] = 448
             processor_args["shortest_edges"] = 378
 
         lmm = Idefics2(
-            config.idefics2_8b_base_path,
-            torch_dtype=eval(cfg.lmm.dtype),
+            paths.idefics2_8b_base_path,
+            torch_dtype=eval(cfg.dtype),
             processor_args=processor_args,
         )
     elif cfg.model_name == "llava-interleave-7b":
         lmm = LLaVa(
-            config.llava_interleave_7b_path,
-            torch_dtype=eval(cfg.lmm.dtype),
+            paths.llava_interleave_7b_path,
+            torch_dtype=eval(cfg.dtype),
         )
     else:
         raise ValueError(f"Unsupport model {cfg.model_name}")
@@ -124,6 +115,29 @@ def load_from_pretrained(save_directory, lmm, encoder):
         lmm.model = PeftModel.from_pretrained(encoder.lmm.model, save_directory)
 
 
-def get_full_runname(cfg):
-    # runname-dataset-training_samples-num_shot
-    return f"{cfg.runname}-{cfg.data.name}-{cfg.data.num_query_samples}-{cfg.data.num_shot}shot"
+# update execute_eval in eval.py if runname format is changed
+def get_expand_runname(cfg: DictConfig):
+    """
+    Get the expanded runname based on the train, eval or analyze config.
+    """
+    if hasattr(cfg, "runname"):
+        # training mode
+        if cfg.data.num_shot == 0:
+            # peft
+            return f"{cfg.runname}-{cfg.model_name}-{cfg.data.name}-{cfg.data.num_query_samples}"
+        # runname-model-dataset-training_samples-num_shot
+        return f"{cfg.runname}-{cfg.model_name}-{cfg.data.name}-{cfg.data.num_query_samples}-{cfg.data.num_shot}shot"
+
+    if hasattr(cfg, "record_dir"):
+        # analyze mode
+        # record dir format: path/to/{expand-runname}
+        return os.path.basename(cfg.record_dir)
+
+    if getattr(cfg, "ckpt_path", None):
+        # eval from a specific checkpoint
+        # checkpoint dir format: path/to/{expand-runname}/epoch-{epoch}
+        return os.path.basename(os.path.dirname(cfg.ckpt_path))
+    else:
+        # eval from ICL
+        # icl-model-dataset
+        return f"icl-{cfg.model_name}-{cfg.data.name}"
