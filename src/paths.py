@@ -12,6 +12,9 @@ machine_id = subprocess.run(
 testbed_dir = str(Path(__file__).parent.parent / "testbed")
 result_dir = str(Path(__file__).parent.parent / "results")
 
+# 根据不同的机器码确定不同的机器，因此加载不同的/不同路径下数据集 以及 不同路径下的模型权重
+# 4*A6000 主要从share/pyz/下加载数据集和模型权重
+
 if "7fd422" in machine_id:
     # 8x3090
     coco_dir = "/data/share/datasets/mscoco2014"

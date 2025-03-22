@@ -30,30 +30,38 @@ def convert_images_to_rgb(images):
         raise ValueError(f"Unsupported image type: {type(images)}")
 
 
+# 在类实例化（创建对象）后，自动执行一些 后初始化检查和处理逻辑
+# ABCMeta：表示这是一个抽象基类的元类，支持抽象方法的定义。 Abstract Base Class（ABC）
 class PostInitMeta(ABCMeta):
     """Post init metaclass to check some conditions after the class is initialized."""
 
+    # 当创建实例时，重写call函数，调用父类ABCMeta的call创建实例，然后进行一些检查和处理
     def __call__(cls, *args, **kwargs):
         instance = super().__call__(*args, **kwargs)
+        # 强制实例有_support_set和_query_set属性
         assert hasattr(instance, "_support_set") and hasattr(
             instance, "_query_set"
         ), f"Dataset must have _support_set and _query_set attributes."
+
+        # 对数据集随机打乱
         instance._support_set = instance._support_set.shuffle(seed=instance.cfg.seed)
 
         query_set_size = instance.cfg.num_query_samples
         actual_query_set_size = len(instance.query_set)
         if query_set_size:
+            # 用户设置的大小超过实际大小，则修正配置并警告
             if query_set_size > actual_query_set_size:
                 logger.warning(
                     f"cfg.num_query_samples {query_set_size} is larger than the actual query set size {actual_query_set_size}."
                     f"cfg.num_query_samples is set to the actual query set size."
                 )
                 instance.cfg.num_query_samples = actual_query_set_size
-
+            # 打乱并截取指定数量的样本
             instance._query_set = instance._query_set.shuffle(
                 seed=instance.cfg.seed
             ).select(range(int(instance.cfg.num_query_samples)))
         else:
+            # 否则使用完整的query集
             logger.info(
                 f"cfg.num_query_samples is not specified. Using the full query set of size {actual_query_set_size}."
             )
@@ -87,6 +95,7 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
                 f"Dataset {self.name} is not supported by {self.__class__.__name__}"
             )
 
+# 用 @abstractmethod 装饰器标记抽象方法，强制子类必须实现这些方法。
     @property
     def name(self) -> str:
         return self.cfg.name
@@ -148,7 +157,7 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
             A tuple of a list of metadata and a dictionary of metrics.
         """
         pass
-
+# Optional[int] 等价于 Union[int, None]，可以选择整数或者None。
     def get_prediction(
         self,
         model: ModelBase,
@@ -164,7 +173,9 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
             A list of strings, each string is a generated
             response from the model. If the model runs out of memory, return None.
         """
+        # 内存不足（Out Of Memory, OOM）
         max_skip_oom = max_skip_oom or 0
+        # ret = return
         ret = prepare_input(self.name, batch, instruction=self.instruction)
         if isinstance(ret, tuple) and len(ret) == 2:
             # it could be a lmm that returns (text, images)
@@ -178,10 +189,13 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
         try:
             return model.generate(*args_to_generate, **generation_args)
         except Exception as e:
+            # 如果是OOM错误可以包容，否则直接抛出异常
             if "out of memory" not in str(e):
                 raise
+            # 若实例中无 __num_skip_oom 属性，初始化为 0。
             if not hasattr(self, "__num_skip_oom"):
                 self.__num_skip_oom = 0
+            # 若已跳过的 OOM 次数（__num_skip_oom）超过允许的最大值（max_skip_oom），抛出异常；否则OOM次数加1。
             if self.__num_skip_oom >= max_skip_oom:
                 raise
             else:

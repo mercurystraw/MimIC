@@ -5,9 +5,9 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 import src.paths as paths
-from dataset_utils.interface import DatasetBase
+from interface import DatasetBase
 from testbed.data import postprocess_generation
-from utils import get_expand_runname
+from src.utils import get_expand_runname
 
 
 class Dataset(DatasetBase):
@@ -33,6 +33,7 @@ class Dataset(DatasetBase):
         self._support_set = dataset["train"]
         self._query_set = dataset["validation"]
 
+    # 每个数据样本（一轮对话）中涉及的角色数量
     @property
     def num_role_in_round(self):
         # [
@@ -47,6 +48,7 @@ class Dataset(DatasetBase):
     def metric_key():
         return "CIDEr"
 
+    # coco和flickr数据集中的每个图像通常对应多个描述文本，因此，可以选择第一个描述文本作为答案
     def extract_answer(self, item):
         # we use the first answer as grounding truth
         return item["sentences_raw"][0]
@@ -63,13 +65,22 @@ class Dataset(DatasetBase):
         model,
     ):
         result = []
+        # 加载CIDEr评估指标
+        # 当调用 metric = evaluate.load(...) 时，metric 是一个 Metric 类的实例（对象）
+        # 状态：存储待处理的预测（predictions）和参考答案（references）。
+        # 方法：提供 add()、compute() 等接口用于添加数据和计算结果。
+        # metric.add(prediction=prediction, reference=answer)
+        # compute() 基于缓存的所有预测和参考，计算最终得分（如 CIDEr 分数），并返回一个字典（{"cider": 0.55}）。
         metric = evaluate.load(
             os.path.join(paths.testbed_dir, "evaluate", "metrics", "CIDEr")
         )
         eval_dl = self.validation_dataloader(eval_cfg.batch_size)
+        # 选择评估eval_cfg.iterations个batch进行评估或者全部的batch
         iterations = eval_cfg.iterations or len(eval_dl)
         generation_args = eval_cfg.generation_args
+        # 强制限制模型生成的最大文本长度
         generation_args["max_new_tokens"] = 20
+        # 使用 zip 的主要目的是 将两个可迭代对象（range(iterations) 和 eval_dl）对齐，确保循环最多执行 iterations 次，同时借助 tqdm 显示进度条。
         for _, batch in zip(
             range(iterations),
             tqdm(
@@ -87,6 +98,7 @@ class Dataset(DatasetBase):
             if predictions is None:
                 continue
 
+            # zip配对
             for pred, context in zip(predictions, batch):
                 last_item = context[-1]
                 answer = last_item["sentences_raw"]

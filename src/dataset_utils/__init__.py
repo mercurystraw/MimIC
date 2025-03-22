@@ -11,10 +11,14 @@ for filename in os.listdir(os.path.dirname(__file__)):
         module_name = filename[:-3]
         filepath = os.path.join(os.path.dirname(__file__), filename)
 
+        # 根据文件路径 (filepath) 生成一个模块规范对象 (spec)，告诉 Python 如何加载此模块。
         spec = importlib.util.spec_from_file_location(module_name, filepath)
+        # 根据 spec 创建一个空的模块对象
         module = importlib.util.module_from_spec(spec)
+        # 执行模块文件中的代码（相当于 import 语句），将模块中定义的类、函数、变量等加载到 module 对象中
         spec.loader.exec_module(module)
 
+        # 获取模块中的 Dataset 类
         DatasetClass = getattr(module, "Dataset", None)
         if DatasetClass is None:
             continue
@@ -26,5 +30,6 @@ for filename in os.listdir(os.path.dirname(__file__)):
             raise ValueError(
                 f"Module {__name__}.{module_name} does not contain a class that named Dataset and inherits from DatasetBase."
             )
-            
+
+# 控制 from module import * 的行为
 __all__ = ["dataset_mapping", "DatasetBase"]
