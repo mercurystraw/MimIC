@@ -1,7 +1,8 @@
 import os
 import importlib.util
 import inspect
-from .interface import DatasetBase
+
+from src.dataset_utils.interface import DatasetBase
 
 # a mapping from dataset name to Dataset class
 dataset_mapping = {}

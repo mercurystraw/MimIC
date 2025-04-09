@@ -5,7 +5,8 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 import src.paths as paths
-from interface import DatasetBase
+from src.dataset_utils import DatasetBase
+
 from testbed.data import postprocess_generation
 from src.utils import get_expand_runname
 

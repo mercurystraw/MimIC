@@ -39,6 +39,10 @@ def main(cfg: DictConfig):
             if num_query_samples <= 500:
                 return 10
             return 5
+        elif "llama" in model_name:
+            if num_query_samples <= 500:
+                return 10
+            return 5
 
     def save_when(epoch):
         num_query_samples = cfg.data.num_query_samples

@@ -413,9 +413,12 @@ class ModelBase(nn.Module, ABC):
         """
         processor_args = processor_args if processor_args else dict()
 
-        inputs = self.process_input(*inputs, **processor_args).to(
-            device=self.device, dtype=self.model.dtype
-        )
+        # inputs = self.process_input(*inputs, **processor_args).to(
+        #     device=self.device, dtype=self.model.dtype
+        # )
+        inputs = self.process_input(*inputs, ** processor_args).to(self.device)
+
+
         seq_len = inputs.input_ids.shape[-1]  # type: ignore[attr-defined]
 
         generated_ids = self.model.generate(**inputs, **generate_args)

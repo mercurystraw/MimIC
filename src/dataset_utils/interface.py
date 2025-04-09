@@ -255,6 +255,7 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
             self.cfg.num_query_samples = len(self.support_set)
 
         train_set = self.support_set.select(range(self.cfg.num_query_samples))
+        # 从train_set中随机抽样cfg.num_shot * cfg.num_query_samples个样本
         example_sampler = RandomSampler(
             train_set,
             replacement=True,
@@ -271,6 +272,7 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
             # we use the same dataset for both query set and support set
             # because we assume we only have cfg.num_query_samples data
             datasets = [train_set, train_set]
+            # BatchSampler每次从example_sampler中采样self.cfg.num_shot个样本
             samplers = [
                 BatchSampler(
                     example_sampler,
@@ -282,6 +284,7 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
             dl_init_args = dict(
                 datasets=datasets,
                 samplers=samplers,
+                # 指定了从每个数据集中分别抽取的样本数量，表示对第一个数据集（支撑集）中分别抽取self.cfg.num_shot个样本和第二个数据集（查询集）1个样本。
                 num_per_dataset=[self.cfg.num_shot, 1],
             )
         else:
@@ -308,8 +311,10 @@ class DatasetBase(ABC, metaclass=PostInitMeta):
         """
 
         if self.cfg.num_shot > 0:
+            # num_shot * num_query_samples = 最终需要的样本数量
             total_required_examples = self.cfg.num_shot * self.cfg.num_query_samples
             if total_required_examples > len(self.support_set):
+                # support set中的样本数量不足以满足需求，设定replacement允许重复抽样
                 support_set_sampler = RandomSampler(
                     self.support_set,
                     replacement=True,

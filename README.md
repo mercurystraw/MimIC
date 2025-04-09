@@ -55,6 +55,6 @@ This could be a kinda complicate.
 0. You may need to add your model path to `src/paths.py` firstly.
 1. Create your new model in `testbed/models`, following ICLTestbed guides [here](https://github.com/Kamichanw/ICLTestbed/blob/main/docs/How-to%20guides.md).
 2. Specify the method of loading the model in `build_models` from `src/utils.py`.
-3. Global search `idefics` in `shift_model.py` and implement corresponding methods.
+3. Global search `idefics` in `shift_encoder.py` and implement corresponding methods.
 4. Determine how many epochs to run and when to save in `src/train.py`.
 

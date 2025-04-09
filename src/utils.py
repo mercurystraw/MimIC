@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import paths
 from testbed.models.llava import LLaVa
-from testbed.models import Idefics, Idefics2
+from testbed.models import Idefics, Idefics2, LLaMA
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -86,6 +86,11 @@ def build_model(cfg):
     elif cfg.model_name == "llava-interleave-7b":
         lmm = LLaVa(
             paths.llava_interleave_7b_path,
+            torch_dtype=eval(cfg.dtype),
+        )
+    elif cfg.model_name == "llama-7b":
+        lmm = LLaMA(
+            paths.llama_7b_path,
             torch_dtype=eval(cfg.dtype),
         )
     else:

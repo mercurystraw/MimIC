@@ -72,25 +72,73 @@ class ShiftModel(pl.LightningModule):
         )
         self.save_dir = os.path.join(paths.result_dir, "ckpt", get_expand_runname(cfg))
 
+    # def generate_label_mask(self, inputs, num_separator, keep_bos=False):
+    #     """
+    #     Generates label mask which masks tokens before num_separator pad_tokens from given inputs.
+    #     """
+    #     input_ids = inputs["input_ids"]
+    #     batch_size, seq_len = input_ids.shape
+    #     pad_mask = input_ids == self.lmm.processor.tokenizer.pad_token_id
+    #     non_pad_mask = ~pad_mask
+    #     label_mask = torch.zeros_like(input_ids, dtype=torch.bool)
+    #     if self.lmm.processor.tokenizer.padding_side == "left":
+    #         bos_position = non_pad_mask.long().argmax(dim=1)
+    #
+    #     for i in range(batch_size):
+    #         seq_pad_positions = pad_mask[i].nonzero(as_tuple=False).squeeze(-1)
+    #
+    #         if self.lmm.processor.tokenizer.padding_side == "left":
+    #             seq_pad_positions = seq_pad_positions[
+    #                 seq_pad_positions > bos_position[i]
+    #             ]
+    #
+    #         num_pads = len(seq_pad_positions)
+    #         if num_pads < num_separator:
+    #             raise ValueError(
+    #                 f"Sequence {i} has fewer pad tokens ({num_pads}) than num_separator ({num_separator})"
+    #             )
+    #
+    #         sep_position = seq_pad_positions[num_separator - 1].item()
+    #         label_mask[i, sep_position + 1 :] = True
+    #
+    #     label_mask = label_mask & non_pad_mask
+    #     if keep_bos:
+    #         label_mask[torch.arange(batch_size, device=self.device), bos_position] = (
+    #             True
+    #         )
+    #
+    #     return label_mask
+
     def generate_label_mask(self, inputs, num_separator, keep_bos=False):
         """
         Generates label mask which masks tokens before num_separator pad_tokens from given inputs.
         """
         input_ids = inputs["input_ids"]
         batch_size, seq_len = input_ids.shape
-        pad_mask = input_ids == self.lmm.processor.tokenizer.pad_token_id
+        processor = self.lmm.processor  # 直接使用processor对象
+
+        # 获取pad_token_id：Llama没有pad_token，使用eos_token_id代替
+        pad_token_id = getattr(processor, 'pad_token_id', None)
+        if pad_token_id is None:
+            pad_token_id = processor.eos_token_id  # 确保Llama使用eos作为pad
+
+        pad_mask = input_ids == pad_token_id
         non_pad_mask = ~pad_mask
         label_mask = torch.zeros_like(input_ids, dtype=torch.bool)
-        if self.lmm.processor.tokenizer.padding_side == "left":
-            bos_position = non_pad_mask.long().argmax(dim=1)
+
+        # 直接从processor获取padding_side，而不是tokenizer
+        padding_side = getattr(processor, 'padding_side', None)  # 默认右侧填充
+
+        if padding_side == "left":
+            bos_position = non_pad_mask.long().argmax(dim=1)  # 第一个非pad位置作为bos
 
         for i in range(batch_size):
             seq_pad_positions = pad_mask[i].nonzero(as_tuple=False).squeeze(-1)
 
-            if self.lmm.processor.tokenizer.padding_side == "left":
-                seq_pad_positions = seq_pad_positions[
-                    seq_pad_positions > bos_position[i]
-                ]
+            # 处理左侧填充的情况
+            if padding_side == "left":
+                if 'bos_position' in locals():  # 确保bos_position已计算
+                    seq_pad_positions = seq_pad_positions[seq_pad_positions > bos_position[i]]
 
             num_pads = len(seq_pad_positions)
             if num_pads < num_separator:
@@ -99,13 +147,18 @@ class ShiftModel(pl.LightningModule):
                 )
 
             sep_position = seq_pad_positions[num_separator - 1].item()
-            label_mask[i, sep_position + 1 :] = True
+            label_mask[i, sep_position + 1:] = True  # 保留分隔符后的token
 
-        label_mask = label_mask & non_pad_mask
+        label_mask = label_mask & non_pad_mask  # 确保不mask非pad位置
+
         if keep_bos:
-            label_mask[torch.arange(batch_size, device=self.device), bos_position] = (
-                True
-            )
+            if padding_side == "left":
+                # 左侧填充时保留bos位置
+                label_mask[torch.arange(batch_size, device=self.device), bos_position] = True
+            else:
+                # 右侧填充时bos在序列起始位置（无前导pad）
+                bos_pos = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+                label_mask[torch.arange(batch_size, device=self.device), bos_pos] = True
 
         return label_mask
 
@@ -190,13 +243,26 @@ class ShiftModel(pl.LightningModule):
         )
         return {"logits_kl_loss": logits_kl_loss}
 
-    def forward(self, prefix_texts, query_texts, answers, images):
-        pad_token, pad_token_id, bos_token_id, eos_token = (
-            self.lmm.processor.tokenizer.pad_token,
-            self.lmm.processor.tokenizer.pad_token_id,
-            self.lmm.processor.tokenizer.bos_token_id,
-            self.lmm.processor.tokenizer.eos_token,
-        )
+    def forward(self, prefix_texts, query_texts, answers, images=[]):
+        if not hasattr(self.lmm.processor, "tokenizer"):
+            # LLaMAtokenizerFast doesn't have pad_token
+            if self.lmm.processor.pad_token is None:
+                self.lmm.processor.pad_token = self.lmm.processor.eos_token
+                self.lmm.processor.pad_token_id = self.lmm.processor.eos_token_id
+
+            pad_token, pad_token_id, bos_token_id, eos_token = (
+                self.lmm.processor.pad_token,
+                self.lmm.processor.pad_token_id,
+                self.lmm.processor.bos_token_id,
+                self.lmm.processor.eos_token,
+            )
+        else:
+            pad_token, pad_token_id, bos_token_id, eos_token = (
+                self.lmm.processor.tokenizer.pad_token,
+                self.lmm.processor.tokenizer.pad_token_id,
+                self.lmm.processor.tokenizer.bos_token_id,
+                self.lmm.processor.tokenizer.eos_token,
+            )
         loss_dict = {"loss": 0.0}
         hooks = self.shift_encoder.register_record_hooks()
 
@@ -205,9 +271,14 @@ class ShiftModel(pl.LightningModule):
             query + pad_token + answer + eos_token
             for query, answer in zip(query_texts, answers)
         ]
-        query_images = [img[-self.cfg.data.num_image_in_query :] for img in images]
-        query_inputs = self.lmm.process_input(query_images, query_answer).to(
-            device=self.device, dtype=self.dtype
+        query_images = [] if images is None else [img[-self.cfg.data.num_image_in_query :] for img in images]
+         # query_images []
+        # query_images_type： <class 'list'>
+        # query_inputs = self.lmm.process_input(query_images, query_answer).to(
+        #     device=self.device, dtype=self.dtype
+        # )
+        query_inputs = self.lmm.process_input(images=query_images, text=query_answer).to(
+            device=self.device
         )
         query_inputs["attention_mask"] = query_inputs["input_ids"] != pad_token_id
         if self.strategy != Strategy.LM_LOSS:
@@ -216,8 +287,11 @@ class ShiftModel(pl.LightningModule):
                 ice + pad_token + query + pad_token + answer + eos_token
                 for ice, query, answer in zip(prefix_texts, query_texts, answers)
             ]
+            # inputs = self.lmm.process_input(images, full_text).to(
+            #     device=self.device, dtype=self.dtype
+            # )
             inputs = self.lmm.process_input(images, full_text).to(
-                device=self.device, dtype=self.dtype
+                device=self.device,
             )
             inputs["attention_mask"] = inputs["input_ids"] != pad_token_id
 

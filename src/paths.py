@@ -63,3 +63,10 @@ elif "8faf59b" in machine_id:
     llava_interleave_7b_path = "/data/share/model_weight/llava/llava-interleave-qwen-7b-hf"
     idefics2_8b_path = "/data/share/model_weight/idefics/idefics2-8b"  # you'd better not use idefics2-8b to run icl
     idefics2_8b_base_path = "/data/share/model_weight/idefics/idefics2-8b-base"
+
+    # test mimic on nlp dataset BoolQ
+    boolq_dir = "/data/share/datasets/BoolQ"
+    # llama model
+    llama_7b_path = "/data/share/model_weight/llama/llama-7b-hf"
+    llama2_7b_path = "/data/share/model_weight/llama/Llama-2-7b-hf"
+

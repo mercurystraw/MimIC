@@ -3,7 +3,8 @@ import evaluate
 from tqdm import tqdm
 
 import src.paths as paths
-from interface import DatasetBase
+from src.dataset_utils import DatasetBase
+
 from src.utils import get_expand_runname
 
 from testbed.data import (
@@ -15,6 +16,7 @@ from testbed.data import (
 # 自定义装饰器，其核心作用是将某个类或函数 注册为特定数据集（如 "mme"）的检索器（Retriever）
 # 将原始数据项 (item) 转换为特定格式的结构化数据，用于构建多模态对话或问答系统的输入
 # 根据 is_last 参数控制最后一个回答的格式（是否包含内容）
+# 使用()括号是因为用了三元的条件表达式
 @register_dataset_retriever("mme")
 def retriever(item, is_last: bool):
     return (

@@ -57,6 +57,12 @@ class BaseHookEncoder(nn.Module):
                 lmm.model.config.text_config.num_hidden_layers,
                 lmm.model.config.text_config.num_attention_heads,
             )
+        elif "llama-7b" in self.lmm.model_name:
+            self.lmm_hidden_dim, self.lmm_layers, self.lmm_num_head = (
+                lmm.model.config.hidden_size,
+                lmm.model.config.num_hidden_layers,
+                lmm.model.config.num_attention_heads,
+            )
         else:
             raise ValueError(f"{self.lmm.model_name} is not supported")
 
@@ -100,6 +106,8 @@ class BaseHookEncoder(nn.Module):
             return r"model\.text_model\.layers\.\d+\.mlp$"
         elif "llava-interleave" in self.lmm.model_name:
             return r"language_model\.model\.layers\.\d+\.mlp$"
+        elif "llama-7b" in self.lmm.model_name:
+            return r"model\.layers\.\d+\.mlp$"
 
     @property
     def decoder_self_attn_name(self) -> str:
@@ -109,6 +117,8 @@ class BaseHookEncoder(nn.Module):
             return r"model\.text_model\.layers\.\d+\.self_attn$"
         elif "llava-interleave" in self.lmm.model_name:
             return r"language_model\.model\.layers\.\d+\.self_attn$"
+        elif "llama-7b" in self.lmm.model_name:
+            return r"model\.layers\.\d+\.self_attn$"
 
     def register_record_hooks(self, **kwargs):
         # NOTE: record hooks should be registered AFTER all hooks
@@ -543,6 +553,68 @@ def llava_attn_forward(
     attn_output = self.o_proj(attn_output)
     return attn_output, attn_weights
 
+# Copied from transformers.models.llama.modeling_llama.LlamaAttention.forward
+def llama_attn_forward(
+    self,
+    hidden_states: torch.Tensor,
+    position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+    attention_mask: Optional[torch.Tensor],
+    past_key_value=None,
+    cache_position: Optional[torch.LongTensor] = None,
+    module_name=None,
+    shift_encoder=None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    input_shape = hidden_states.shape[:-1]
+    hidden_shape = (*input_shape, -1, self.head_dim)
+
+    query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+    cos, sin = position_embeddings
+
+    from transformers.models.llama.modeling_llama import (
+        apply_rotary_pos_emb,
+        eager_attention_forward,
+        ALL_ATTENTION_FUNCTIONS,
+    )
+
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+    if past_key_value is not None:
+        # sin and cos are specific to RoPE models; cache_position needed for the static cache
+        cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+        key_states, value_states = past_key_value.update(
+            key_states, value_states, self.layer_idx, cache_kwargs
+        )
+
+    attention_interface: Callable = eager_attention_forward
+    if self.config._attn_implementation != "eager":
+        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+    attn_output, attn_weights = attention_interface(
+        self,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        dropout=0.0 if not self.training else self.attention_dropout,
+        scaling=self.scaling,
+        **kwargs,
+    )
+
+    # ------------------------- The following part is newly added ---------------------
+    layer_idx = int(re.findall(r"\d+", module_name)[0])
+    attn_output = shift_encoder.do_shift(
+        layer_idx, query_states, key_states, attn_output
+    )
+    # ---------------------------------------------------------------------------------
+
+    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+
+    attn_output = self.o_proj(attn_output)
+    return attn_output, attn_weights
 
 class MultiheadLinear(nn.Module):
     def __init__(self, lmm_num_head, lmm_hidden_dim):
@@ -633,6 +705,8 @@ class AttnApproximator(BaseHookEncoder):
                     new_attn_foward = idefics2_attn_forward
                 elif "llava-interleave" in self.lmm.model_name:
                     new_attn_foward = llava_attn_forward
+                elif "llama-7b" in self.lmm.model_name:
+                    new_attn_foward = llama_attn_forward
                 else:
                     raise ValueError(f"{self.lmm.model_name} is not supported")
 

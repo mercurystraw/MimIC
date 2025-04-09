@@ -32,7 +32,7 @@ class Mistral(ModelBase):
 
     @property
     def default_prompt_template(self):
-        # fmt: off
+        # fmt: off   代码格式化控制注释：希望保留特定代码段的手动排版格式时;防止代码格式化工具（如 Black）自动修改代码布局
         return (
             "{% if messages[0]['role'].lower() in ['instruction', 'system'] %}"
                 "{{ messages[0]['role'].capitalize() + ': ' + messages[0]['content'] + '\n'}}"
