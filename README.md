@@ -2,7 +2,7 @@
 
 <p align="center">
 <a href="">
-<img alt="Static Badge" src="https://img.shields.io/badge/arXiv-coming soon-red"></a>
+<img alt="Static Badge" src="https://img.shields.io/badge/arXiv-2504.08851-red"></a>
 </p>
 
 <img src="./assets/overview.png" alt="overview figure" style="display: block; margin: 0 auto; width: 90%;" />
