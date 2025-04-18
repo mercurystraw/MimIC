@@ -1,7 +1,7 @@
 <h1 align="center">Mimic In-Context Learning for Multimodal Tasks</h1>
 
 <p align="center">
-<a href="">
+<a href="https://arxiv.com/abs/2504.08851">
 <img alt="Static Badge" src="https://img.shields.io/badge/arXiv-2504.08851-red"></a>
 </p>
 
@@ -58,3 +58,12 @@ This could be a kinda complicate.
 3. Global search `idefics` in `shift_model.py` and implement corresponding methods.
 4. Determine how many epochs to run and when to save in `src/train.py`.
 
+# Recommended Citation
+```
+@article{jiang2025mimic,
+  title={Mimic In-Context Learning for Multimodal Tasks},
+  author={Jiang, Yuchu and Fu, Jiale and Hao, Chenduo and Hu, Xinting and Peng, Yingzhe and Geng, Xin and Yang, Xu},
+  journal={arXiv preprint arXiv:2504.08851},
+  year={2025}
+}
+```
