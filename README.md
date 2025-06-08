@@ -60,10 +60,12 @@ This could be a kinda complicate.
 
 # Recommended Citation
 ```
-@article{jiang2025mimic,
-  title={Mimic In-Context Learning for Multimodal Tasks},
-  author={Jiang, Yuchu and Fu, Jiale and Hao, Chenduo and Hu, Xinting and Peng, Yingzhe and Geng, Xin and Yang, Xu},
-  journal={arXiv preprint arXiv:2504.08851},
-  year={2025}
+@InProceedings{Jiang_2025_CVPR,
+    author    = {Jiang, Yuchu and Fu, Jiale and Hao, Chenduo and Hu, Xinting and Peng, Yingzhe and Geng, Xin and Yang, Xu},
+    title     = {Mimic In-Context Learning for Multimodal Tasks},
+    booktitle = {Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR)},
+    month     = {June},
+    year      = {2025},
+    pages     = {29825-29835}
 }
 ```
